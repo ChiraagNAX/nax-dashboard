@@ -1,0 +1,8 @@
+.Renviron
+rsconnect/
+config/secrets.local.ps1
+config/secrets.local.json
+*.log
+.Rhistory
+.RData
+.Rproj.user/

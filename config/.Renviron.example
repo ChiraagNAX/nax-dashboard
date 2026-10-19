@@ -1,0 +1,5 @@
+NAX_PG_HOST=aws-0-ap-southeast-2.pooler.supabase.com
+NAX_PG_PORT=6543
+NAX_PG_DB=postgres
+NAX_PG_USER=postgres.your-project-ref
+NAX_PG_PASSWORD=REPLACE_WITH_SUPABASE_PASSWORD
