@@ -16,3 +16,5 @@ Never committed. The writer reads `config/secrets.local.ps1` (gitignored); the S
 ## Status
 
 MVP in progress. First target: Roja's window closes 2026-10-14 00:00 UTC.
+
+
