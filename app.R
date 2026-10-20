@@ -43,16 +43,16 @@ nax_check_credentials <- function() {
 }
 
 .diag_db <- function() {
-  envs <- c("NAX_PG_HOST","NAX_PG_PORT","NAX_PG_DB","NAX_PG_USER","NAX_PG_PASSWORD")
-  present <- setNames(nchar(Sys.getenv(envs)) > 0, envs)
   res <- tryCatch({
-    r <- q("select count(*)::int as n from users")
-    sprintf("DB OK — host=%s users=%s", Sys.getenv("NAX_PG_HOST"), r$n[1])
-  }, error = function(e) sprintf("DB ERROR: %s", conditionMessage(e)))
-  paste0(
-    "Env set: ", paste(sprintf("%s=%s", envs, ifelse(present, "YES", "NO")), collapse = " "),
-    " | ", res
-  )
+    all_users <- q("select user_id, role, trader_id from users")
+    roja <- tryCatch(get_user("roja"), error = function(e) sprintf("get_user err: %s", conditionMessage(e)))
+    sprintf("users=%d all=%s | get_user(roja) rows=%s cols=%s",
+      nrow(all_users),
+      paste(all_users$user_id, collapse=","),
+      if (is.character(roja)) roja else nrow(roja),
+      if (is.character(roja)) "n/a" else paste(names(roja), collapse=","))
+  }, error = function(e) sprintf("DIAG ERROR: %s", conditionMessage(e)))
+  res
 }
 
 ui <- fluidPage(
