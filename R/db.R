@@ -22,8 +22,7 @@ nax_pool <- function() {
     check_interrupts = FALSE,
     bigint   = "integer",
     minSize  = 1,
-    maxSize  = 4,
-    validate = "select 1"
+    maxSize  = 4
   )
   .nax_pool
 }
