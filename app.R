@@ -25,21 +25,11 @@ source("R/ui_admin.R")
 }
 
 # ---- auth adapter — called by shinymanager as check_credentials(user, password) ----
+# WIRING TEST: this always returns TRUE to confirm shinymanager actually calls our function.
 nax_check_credentials <- function(user, password) {
-  .auth_log(sprintf("ATTEMPT user='%s' pwdlen=%d", as.character(user), nchar(password)))
-  u <- tryCatch(get_user(user), error = function(e) {
-    .auth_log(sprintf("get_user ERR: %s", conditionMessage(e))); NULL
-  })
-  if (is.null(u) || nrow(u) == 0) {
-    .auth_log(sprintf("no row for '%s'", user)); return(list(result = FALSE))
-  }
-  ok <- tryCatch(bcrypt::checkpw(password, u$password_hash),
-                 error = function(e) { .auth_log(sprintf("bcrypt ERR: %s", conditionMessage(e))); FALSE })
-  .auth_log(sprintf("bcrypt=%s for '%s'", as.character(ok), user))
-  if (!ok) return(list(result = FALSE))
-  tryCatch(touch_login(user), error = function(e) NULL)
+  .auth_log(sprintf("CALLED user='%s' pwdlen=%d", as.character(user), nchar(password)))
   list(result = TRUE,
-       user_info = list(user = user, role = u$role, trader_id = u$trader_id))
+       user_info = list(user = as.character(user), role = "trader", trader_id = "roja"))
 }
 
 .diag_db <- function() {
