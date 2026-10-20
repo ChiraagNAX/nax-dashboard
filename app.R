@@ -17,41 +17,46 @@ source("R/db.R")
 source("R/ui_trader.R")
 source("R/ui_admin.R")
 
-# ---- auth adapter: shinymanager calls check_credentials() ----
+.auth_log_path <- file.path(tempdir(), "nax-auth.log")
+
+.auth_log <- function(msg) {
+  tryCatch(writeLines(sprintf("[%s] %s", format(Sys.time()), msg),
+                      con = .auth_log_path, sep = "\n"), error = function(e) NULL)
+  tryCatch(cat(sprintf("[%s] %s\n", format(Sys.time()), msg),
+               file = .auth_log_path, append = TRUE), error = function(e) NULL)
+  message(msg)
+}
+
+# ---- auth adapter ----
 nax_check_credentials <- function() {
   function(user, password) {
+    .auth_log(sprintf("ATTEMPT user='%s' pwdlen=%d pwdhead='%s'",
+                      as.character(user), nchar(password), substr(password, 1, 4)))
     u <- tryCatch(get_user(user), error = function(e) {
-      message(sprintf("[AUTH] get_user error for %s: %s", user, conditionMessage(e)))
-      NULL
+      .auth_log(sprintf("get_user ERR: %s", conditionMessage(e))); NULL
     })
     if (is.null(u) || nrow(u) == 0) {
-      message(sprintf("[AUTH] no row for user=%s (db host=%s)",
-                      user, Sys.getenv("NAX_PG_HOST", "unset")))
-      return(list(result = FALSE))
+      .auth_log(sprintf("no row for '%s'", user)); return(list(result = FALSE))
     }
+    .auth_log(sprintf("found row for '%s', hash head='%s'", user, substr(u$password_hash, 1, 7)))
     ok <- tryCatch(bcrypt::checkpw(password, u$password_hash),
-                   error = function(e) { message("[AUTH] bcrypt err: ", conditionMessage(e)); FALSE })
-    if (!ok) {
-      message(sprintf("[AUTH] bcrypt mismatch user=%s", user))
-      return(list(result = FALSE))
-    }
+                   error = function(e) { .auth_log(sprintf("bcrypt ERR: %s", conditionMessage(e))); FALSE })
+    .auth_log(sprintf("bcrypt result=%s", as.character(ok)))
+    if (!ok) return(list(result = FALSE))
     tryCatch(touch_login(user), error = function(e) NULL)
-    message(sprintf("[AUTH] success user=%s role=%s trader=%s", user, u$role, u$trader_id))
     list(result = TRUE,
          user_info = list(user = user, role = u$role, trader_id = u$trader_id))
   }
 }
 
 .diag_db <- function() {
-  tryCatch({
-    roja <- get_user("roja")
-    h <- as.character(roja$password_hash[1])
-    hash_info <- sprintf("hash_len=%d head=%s", nchar(h), substr(h, 1, 7))
-    # Test with a KNOWN wrong password + a probe (any string) just to see bcrypt works
-    bcrypt_ok <- tryCatch(bcrypt::checkpw("anything", h), error = function(e) sprintf("checkpw err: %s", conditionMessage(e)))
-    sprintf("roja: %s | checkpw('anything') => %s | role=%s trader=%s",
-            hash_info, as.character(bcrypt_ok), roja$role, roja$trader_id)
-  }, error = function(e) sprintf("DIAG ERROR: %s", conditionMessage(e)))
+  log_tail <- tryCatch({
+    if (file.exists(.auth_log_path)) {
+      ls <- readLines(.auth_log_path, warn = FALSE)
+      paste(tail(ls, 10), collapse = " || ")
+    } else "no log yet"
+  }, error = function(e) sprintf("log err: %s", conditionMessage(e)))
+  sprintf("AUTH LOG: %s", log_tail)
 }
 
 ui <- fluidPage(
