@@ -43,16 +43,15 @@ nax_check_credentials <- function() {
 }
 
 .diag_db <- function() {
-  res <- tryCatch({
-    all_users <- q("select user_id, role, trader_id from users")
-    roja <- tryCatch(get_user("roja"), error = function(e) sprintf("get_user err: %s", conditionMessage(e)))
-    sprintf("users=%d all=%s | get_user(roja) rows=%s cols=%s",
-      nrow(all_users),
-      paste(all_users$user_id, collapse=","),
-      if (is.character(roja)) roja else nrow(roja),
-      if (is.character(roja)) "n/a" else paste(names(roja), collapse=","))
+  tryCatch({
+    roja <- get_user("roja")
+    h <- as.character(roja$password_hash[1])
+    hash_info <- sprintf("hash_len=%d head=%s", nchar(h), substr(h, 1, 7))
+    # Test with a KNOWN wrong password + a probe (any string) just to see bcrypt works
+    bcrypt_ok <- tryCatch(bcrypt::checkpw("anything", h), error = function(e) sprintf("checkpw err: %s", conditionMessage(e)))
+    sprintf("roja: %s | checkpw('anything') => %s | role=%s trader=%s",
+            hash_info, as.character(bcrypt_ok), roja$role, roja$trader_id)
   }, error = function(e) sprintf("DIAG ERROR: %s", conditionMessage(e)))
-  res
 }
 
 ui <- fluidPage(
