@@ -25,11 +25,21 @@ source("R/ui_admin.R")
 }
 
 # ---- auth adapter — called by shinymanager as check_credentials(user, password) ----
-# WIRING TEST: this always returns TRUE to confirm shinymanager actually calls our function.
 nax_check_credentials <- function(user, password) {
-  .auth_log(sprintf("CALLED user='%s' pwdlen=%d", as.character(user), nchar(password)))
+  .auth_log(sprintf("ATTEMPT user='%s' pwdlen=%d", as.character(user), nchar(password)))
+  u <- tryCatch(get_user(user), error = function(e) {
+    .auth_log(sprintf("get_user ERR: %s", conditionMessage(e))); NULL
+  })
+  if (is.null(u) || nrow(u) == 0) {
+    .auth_log(sprintf("no row for '%s'", user)); return(list(result = FALSE))
+  }
+  ok <- tryCatch(bcrypt::checkpw(password, u$password_hash),
+                 error = function(e) { .auth_log(sprintf("bcrypt ERR: %s", conditionMessage(e))); FALSE })
+  .auth_log(sprintf("bcrypt=%s for '%s'", as.character(ok), user))
+  if (!ok) return(list(result = FALSE))
+  tryCatch(touch_login(user), error = function(e) NULL)
   list(result = TRUE,
-       user_info = list(user = as.character(user), role = "trader", trader_id = "roja"))
+       user_info = list(user = as.character(user), role = u$role, trader_id = u$trader_id))
 }
 
 .diag_db <- function() {
@@ -70,29 +80,20 @@ server <- function(input, output, session) {
   })
   role_rv <- reactive({
     info <- auth$user_info
-    if (is.null(info)) "trader" else info$role
+    if (is.null(info)) NULL else info$role
   })
 
+  # Start both module servers unconditionally; UI switch decides what shows.
+  trader_server("trader", trader_id_rv)
+  admin_server("admin",   user_id_rv)
+
   output$page <- renderUI({
-    req(auth$user)
-    if (role_rv() == "admin") {
+    req(auth$user, role_rv())
+    if (identical(role_rv(), "admin")) {
       admin_ui("admin")
     } else {
       req(trader_id_rv())
       trader_ui("trader")
-    }
-  })
-
-  observe({
-    if (!is.null(auth$user) && role_rv() == "admin") {
-      admin_server("admin", user_id_rv)
-    }
-  })
-
-  observe({
-    tid <- trader_id_rv()
-    if (!is.null(auth$user) && !is.null(tid) && role_rv() != "admin") {
-      trader_server("trader", trader_id_rv)
     }
   })
 }
