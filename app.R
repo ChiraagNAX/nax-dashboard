@@ -17,12 +17,10 @@ source("R/db.R")
 source("R/ui_trader.R")
 source("R/ui_admin.R")
 
-.auth_log_buf <- new.env()
-.auth_log_buf$lines <- character(0)
-
 .auth_log <- function(msg) {
+  prev <- getOption("nax.auth.log", character(0))
   line <- sprintf("[%s] %s", format(Sys.time()), msg)
-  .auth_log_buf$lines <- c(tail(.auth_log_buf$lines, 20), line)
+  options(nax.auth.log = c(tail(prev, 20), line))
 }
 
 # ---- auth adapter — called by shinymanager as check_credentials(user, password) ----
@@ -44,9 +42,10 @@ nax_check_credentials <- function(user, password) {
 }
 
 .diag_db <- function() {
-  n <- length(.auth_log_buf$lines)
-  if (n == 0) return("AUTH LOG: (empty — no auth attempts yet)")
-  sprintf("AUTH LOG (%d lines): %s", n, paste(.auth_log_buf$lines, collapse = " || "))
+  lines <- getOption("nax.auth.log", character(0))
+  n <- length(lines)
+  if (n == 0) return("AUTH LOG: (empty)")
+  sprintf("AUTH LOG (%d): %s", n, paste(lines, collapse = " || "))
 }
 
 ui <- fluidPage(
