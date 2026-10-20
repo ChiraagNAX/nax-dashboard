@@ -20,33 +20,26 @@ source("R/ui_admin.R")
 .auth_log_path <- file.path(tempdir(), "nax-auth.log")
 
 .auth_log <- function(msg) {
-  tryCatch(writeLines(sprintf("[%s] %s", format(Sys.time()), msg),
-                      con = .auth_log_path, sep = "\n"), error = function(e) NULL)
   tryCatch(cat(sprintf("[%s] %s\n", format(Sys.time()), msg),
                file = .auth_log_path, append = TRUE), error = function(e) NULL)
-  message(msg)
 }
 
-# ---- auth adapter ----
-nax_check_credentials <- function() {
-  function(user, password) {
-    .auth_log(sprintf("ATTEMPT user='%s' pwdlen=%d pwdhead='%s'",
-                      as.character(user), nchar(password), substr(password, 1, 4)))
-    u <- tryCatch(get_user(user), error = function(e) {
-      .auth_log(sprintf("get_user ERR: %s", conditionMessage(e))); NULL
-    })
-    if (is.null(u) || nrow(u) == 0) {
-      .auth_log(sprintf("no row for '%s'", user)); return(list(result = FALSE))
-    }
-    .auth_log(sprintf("found row for '%s', hash head='%s'", user, substr(u$password_hash, 1, 7)))
-    ok <- tryCatch(bcrypt::checkpw(password, u$password_hash),
-                   error = function(e) { .auth_log(sprintf("bcrypt ERR: %s", conditionMessage(e))); FALSE })
-    .auth_log(sprintf("bcrypt result=%s", as.character(ok)))
-    if (!ok) return(list(result = FALSE))
-    tryCatch(touch_login(user), error = function(e) NULL)
-    list(result = TRUE,
-         user_info = list(user = user, role = u$role, trader_id = u$trader_id))
+# ---- auth adapter — called by shinymanager as check_credentials(user, password) ----
+nax_check_credentials <- function(user, password) {
+  .auth_log(sprintf("ATTEMPT user='%s' pwdlen=%d", as.character(user), nchar(password)))
+  u <- tryCatch(get_user(user), error = function(e) {
+    .auth_log(sprintf("get_user ERR: %s", conditionMessage(e))); NULL
+  })
+  if (is.null(u) || nrow(u) == 0) {
+    .auth_log(sprintf("no row for '%s'", user)); return(list(result = FALSE))
   }
+  ok <- tryCatch(bcrypt::checkpw(password, u$password_hash),
+                 error = function(e) { .auth_log(sprintf("bcrypt ERR: %s", conditionMessage(e))); FALSE })
+  .auth_log(sprintf("bcrypt=%s for '%s'", as.character(ok), user))
+  if (!ok) return(list(result = FALSE))
+  tryCatch(touch_login(user), error = function(e) NULL)
+  list(result = TRUE,
+       user_info = list(user = user, role = u$role, trader_id = u$trader_id))
 }
 
 .diag_db <- function() {
@@ -78,7 +71,7 @@ ui <- secure_app(ui,
                  enable_admin = FALSE)
 
 server <- function(input, output, session) {
-  auth <- secure_server(check_credentials = nax_check_credentials())
+  auth <- secure_server(check_credentials = nax_check_credentials)
 
   user_id_rv   <- reactive({ auth$user })
   trader_id_rv <- reactive({
