@@ -17,11 +17,12 @@ source("R/db.R")
 source("R/ui_trader.R")
 source("R/ui_admin.R")
 
-.auth_log_path <- file.path(tempdir(), "nax-auth.log")
+.auth_log_buf <- new.env()
+.auth_log_buf$lines <- character(0)
 
 .auth_log <- function(msg) {
-  tryCatch(cat(sprintf("[%s] %s\n", format(Sys.time()), msg),
-               file = .auth_log_path, append = TRUE), error = function(e) NULL)
+  line <- sprintf("[%s] %s", format(Sys.time()), msg)
+  .auth_log_buf$lines <- c(tail(.auth_log_buf$lines, 20), line)
 }
 
 # ---- auth adapter — called by shinymanager as check_credentials(user, password) ----
@@ -43,13 +44,9 @@ nax_check_credentials <- function(user, password) {
 }
 
 .diag_db <- function() {
-  log_tail <- tryCatch({
-    if (file.exists(.auth_log_path)) {
-      ls <- readLines(.auth_log_path, warn = FALSE)
-      paste(tail(ls, 10), collapse = " || ")
-    } else "no log yet"
-  }, error = function(e) sprintf("log err: %s", conditionMessage(e)))
-  sprintf("AUTH LOG: %s", log_tail)
+  n <- length(.auth_log_buf$lines)
+  if (n == 0) return("AUTH LOG: (empty — no auth attempts yet)")
+  sprintf("AUTH LOG (%d lines): %s", n, paste(.auth_log_buf$lines, collapse = " || "))
 }
 
 ui <- fluidPage(
