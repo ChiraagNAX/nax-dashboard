@@ -1,26 +1,37 @@
-# NAX Trader Dashboard — custom auth (no shinymanager)
+# NAX Trader Dashboard — custom auth + bslib theme
 suppressPackageStartupMessages({
-  library(shiny); library(DT); library(bcrypt); library(jsonlite)
+  library(shiny); library(bslib); library(DT); library(bcrypt); library(jsonlite)
 })
 
 source("R/calc.R")
 source("R/db.R")
+source("R/theme.R")
 source("R/ui_trader.R")
 source("R/ui_admin.R")
 
-login_ui <- div(
-  style = "max-width:380px; margin:80px auto; padding:24px; border:1px solid #ddd; border-radius:8px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;",
-  h3("NAX Trader Dashboard", style = "margin-top:0; color:#2c3e50;"),
-  p("Please sign in", style = "color:#666;"),
-  textInput("login_user", "Username"),
-  passwordInput("login_pw", "Password"),
+login_ui <- div(class = "nax-login",
+  div(class = "brand",
+    div(class = "logo", "N"),
+    h3("NAX Trader Dashboard"),
+    div(class = "sub", "Proprietary Trader Programme")
+  ),
+  textInput("login_user", "Username", width = "100%"),
+  passwordInput("login_pw", "Password", width = "100%"),
   actionButton("login_btn", "Sign in", class = "btn-primary", width = "100%"),
-  uiOutput("login_err")
+  uiOutput("login_err"),
+  div(style = "text-align:center; margin-top:16px; font-size:11px; color:#94A3B8;",
+      "Secured by shinymanager-compatible bcrypt · Session timeout 1 hour")
 )
 
-ui <- fluidPage(
-  tags$head(tags$title("NAX Trader Dashboard"),
-            tags$style(HTML("body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;}.well{background:#fafafa}h3{color:#2c3e50}"))),
+ui <- page_fluid(
+  theme = nax_theme,
+  tags$head(
+    tags$title("NAX Trader Dashboard"),
+    tags$link(rel = "preconnect", href = "https://fonts.googleapis.com"),
+    tags$link(rel = "stylesheet",
+              href = "https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap"),
+    tags$style(HTML(nax_css))
+  ),
   uiOutput("root")
 )
 
@@ -53,7 +64,7 @@ server <- function(input, output, session) {
 
   output$login_err <- renderUI({
     if (is.null(auth$err)) NULL
-    else div(style = "color:#c0392b; margin-top:8px;", auth$err)
+    else div(class = "err", auth$err)
   })
 
   user_id_rv   <- reactive({ auth$user_id })
@@ -64,11 +75,20 @@ server <- function(input, output, session) {
 
   output$root <- renderUI({
     if (is.null(auth$user_id)) return(login_ui)
-    if (identical(auth$role, "admin")) admin_ui("admin")
-    else {
+    if (identical(auth$role, "admin")) {
+      div(style = "padding: 24px 32px;", admin_ui("admin"))
+    } else {
       req(auth$trader_id)
-      trader_ui("trader")
+      div(style = "padding: 20px 24px;",
+          trader_ui("trader"),
+          div(style = "text-align: right; margin-top: 20px;",
+              actionLink("logout_btn", "Sign out",
+                        style = "color:#64748B; font-size:12px;")))
     }
+  })
+
+  observeEvent(input$logout_btn, {
+    auth$user_id <- NULL; auth$role <- NULL; auth$trader_id <- NULL
   })
 }
 
