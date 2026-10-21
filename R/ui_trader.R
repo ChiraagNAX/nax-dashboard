@@ -427,23 +427,121 @@ trader_server <- function(id, trader_id_rv) {
           div(style="color:#64748B; font-size:13px; padding:4px 0;",
               "No settled windows yet.")
         } else {
-          tableOutput(ns("ledger_table"))
+          tagList(
+            uiOutput(ns("ledger_rows_ui")),
+            div(style="font-size:11px; color:#94A3B8; margin-top:10px;",
+                "Download the statement to attach to your invoice to Finance.")
+          )
         }
       )
     })
 
-    output$ledger_table <- renderTable({
+    output$ledger_rows_ui <- renderUI({
       t <- bundle()$trader
       pay <- get_payouts(t$trader_id)
       if (nrow(pay) == 0) return(NULL)
-      data.frame(
-        Window = sprintf("%s → %s",
-                         format(pay$window_start, "%d %b"),
-                         format(pay$window_end,   "%d %b")),
-        Payout = sprintf("$%s", format(round(pay$eligible_payout_usd, 0), big.mark=",")),
-        Status = toupper(pay$ledger_status),
-        Paid   = ifelse(is.na(pay$paid_at), "—", format(pay$paid_at, "%d %b"))
-      )
-    }, striped = FALSE, bordered = FALSE, spacing = "xs")
+      rows <- lapply(seq_len(nrow(pay)), function(i) {
+        div(class = "nax-payout-row",
+          span(class = "k",
+            sprintf("%s → %s",
+                    format(pay$window_start[i], "%d %b"),
+                    format(pay$window_end[i],   "%d %b"))),
+          span(style = "display:flex; gap:12px; align-items:center;",
+            span(class = "v nax-mono",
+                 sprintf("$%s", format(round(pay$eligible_payout_usd[i], 0), big.mark=","))),
+            span(class = sprintf("nax-badge %s",
+                                 switch(pay$ledger_status[i],
+                                        "paid" = "pass",
+                                        "invoiced" = "pending",
+                                        "pending")),
+                 toupper(pay$ledger_status[i])),
+            downloadLink(ns(sprintf("stmt_%d", pay$payout_id[i])),
+                         "Statement",
+                         style="font-size:11px; color:#0EA5E9;")
+          )
+        )
+      })
+      do.call(tagList, rows)
+    })
+
+    # Dynamic download handlers per payout
+    observe({
+      t <- bundle()$trader
+      pay <- get_payouts(t$trader_id)
+      for (i in seq_len(nrow(pay))) {
+        local({
+          row <- pay[i, , drop = FALSE]
+          trader_row <- t
+          output[[sprintf("stmt_%d", row$payout_id)]] <- downloadHandler(
+            filename = function() sprintf("nax-statement-%s-%s.html",
+                                          row$trader_id,
+                                          format(row$window_end, "%Y%m%d")),
+            content = function(file) {
+              html <- build_statement_html(trader_row, row)
+              writeLines(html, file)
+            }
+          )
+        })
+      }
+    })
   })
+}
+
+# ---------- statement HTML generator ----------
+build_statement_html <- function(trader, payout) {
+  entity <- if (is.na(trader$entity_name)) trader$display_name else trader$entity_name
+  usdt_full <- if (is.na(trader$usdt_address)) "(not configured)" else trader$usdt_address
+  usdt_net  <- if (is.na(trader$usdt_network)) "(network tbc)" else trader$usdt_network
+  issued <- format(Sys.time(), "%d %b %Y %H:%M UTC")
+  w_start <- format(payout$window_start, "%d %b %Y")
+  w_end   <- format(payout$window_end,   "%d %b %Y")
+
+  paste0(
+    "<!doctype html><html><head><meta charset='utf-8'>",
+    "<title>NAX Statement — ", entity, " — ", w_end, "</title>",
+    "<style>",
+    "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:720px;margin:40px auto;padding:40px;color:#0F172A;}",
+    ".brand{font-size:22px;font-weight:700;color:#0F172A;margin-bottom:4px;}",
+    ".sub{color:#64748B;font-size:13px;}",
+    "h2{margin-top:32px;font-size:16px;color:#0F172A;border-bottom:1px solid #E2E8F0;padding-bottom:8px;}",
+    "table{width:100%;border-collapse:collapse;font-size:14px;}",
+    "td{padding:8px 4px;}",
+    "td.k{color:#64748B;}",
+    "td.v{text-align:right;font-family:'JetBrains Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums;}",
+    ".total{border-top:2px solid #0F172A;font-weight:600;font-size:16px;}",
+    ".notice{background:#FEF3C7;color:#92400E;padding:12px 16px;border-radius:8px;font-size:12px;margin-top:24px;}",
+    ".footer{color:#94A3B8;font-size:11px;margin-top:40px;border-top:1px solid #E2E8F0;padding-top:16px;}",
+    "</style></head><body>",
+    "<div class='brand'>NAX Capital — Statement of amount owed</div>",
+    "<div class='sub'>Issued ", issued, "</div>",
+    "<h2>Trader</h2>",
+    "<table>",
+    "<tr><td class='k'>Entity</td><td class='v'>", entity, "</td></tr>",
+    "<tr><td class='k'>Trader ID</td><td class='v'>", trader$trader_id, "</td></tr>",
+    "<tr><td class='k'>Level</td><td class='v'>", trader$level_code, " ($", format(trader$capital_usd, big.mark=","), ")</td></tr>",
+    "</table>",
+    "<h2>Window ", w_start, " → ", w_end, "</h2>",
+    "<table>",
+    "<tr><td class='k'>Starting equity</td><td class='v'>$", format(round(payout$starting_equity_usd,2), big.mark=","), "</td></tr>",
+    "<tr><td class='k'>Ending equity</td><td class='v'>$", format(round(payout$ending_equity_usd,2), big.mark=","), "</td></tr>",
+    "<tr><td class='k'>Net trading profit</td><td class='v'>$", format(round(payout$net_profit_usd,2), big.mark=","), "</td></tr>",
+    "<tr><td class='k'>Index return</td><td class='v'>", sprintf("%+.2f%%", payout$index_return_pct), "</td></tr>",
+    "<tr><td class='k'>Benchmark-equivalent (floored at $0)</td><td class='v'>$", format(round(payout$benchmark_equiv_usd,2), big.mark=","), "</td></tr>",
+    "<tr><td class='k'>Outperformance</td><td class='v'>$", format(round(payout$outperformance_usd,2), big.mark=","), "</td></tr>",
+    "<tr><td class='k'>Profit share (", payout$profit_share_pct, "%)</td><td class='v'>$", format(round(payout$eligible_payout_usd,2), big.mark=","), "</td></tr>",
+    if (!is.null(payout$holdback_usd) && payout$holdback_usd > 0)
+      paste0("<tr><td class='k'>Holdback</td><td class='v'>$", format(round(payout$holdback_usd,2), big.mark=","), "</td></tr>") else "",
+    "<tr class='total'><td>Amount owed (USDT)</td><td class='v'>$", format(round(payout$payable_now_usd,2), big.mark=","), "</td></tr>",
+    "</table>",
+    "<h2>Payment</h2>",
+    "<table>",
+    "<tr><td class='k'>Invoice to</td><td class='v'>eran@naxcapital.com.au</td></tr>",
+    "<tr><td class='k'>USDT address</td><td class='v'>", usdt_full, "</td></tr>",
+    "<tr><td class='k'>Network</td><td class='v'>", usdt_net, "</td></tr>",
+    "</table>",
+    "<div class='notice'>This is a statement of amount owed, not a tax invoice. The trader issues their own invoice to NAX Finance for this amount.</div>",
+    "<div class='footer'>Indicative only. Final payout is determined by NAX reconciliation under the Contractor Agreement. ",
+    "Generated by NAX Trader Dashboard.</div>",
+    "</body></html>"
+  )
 }

@@ -35,8 +35,28 @@ ui <- page_fluid(
   uiOutput("root")
 )
 
+SESSION_TIMEOUT_MIN <- 60L
+
 server <- function(input, output, session) {
-  auth <- reactiveValues(user_id = NULL, role = NULL, trader_id = NULL, err = NULL)
+  auth <- reactiveValues(user_id = NULL, role = NULL, trader_id = NULL,
+                         err = NULL, last_activity = Sys.time())
+
+  # Any input changes = activity (keeps session alive)
+  observe({
+    input$login_btn; input$logout_btn
+    isolate(auth$last_activity <- Sys.time())
+  })
+  # Timeout tick
+  observe({
+    invalidateLater(60000, session)
+    if (!is.null(auth$user_id)) {
+      idle_min <- as.numeric(difftime(Sys.time(), auth$last_activity, units = "mins"))
+      if (idle_min > SESSION_TIMEOUT_MIN) {
+        auth$user_id <- NULL; auth$role <- NULL; auth$trader_id <- NULL
+        auth$err <- "Session timed out. Please sign in again."
+      }
+    }
+  })
 
   observeEvent(input$login_btn, {
     user <- isolate(input$login_user)
@@ -60,6 +80,7 @@ server <- function(input, output, session) {
     auth$role      <- as.character(u$role)
     auth$trader_id <- if (is.na(u$trader_id)) NULL else as.character(u$trader_id)
     auth$err       <- NULL
+    auth$last_activity <- Sys.time()
   })
 
   output$login_err <- renderUI({
