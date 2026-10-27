@@ -134,6 +134,20 @@ nax_css <- "
 
 `%||%` <- function(a, b) if (is.null(a) || length(a) == 0 || (length(a) == 1 && is.na(a))) b else a
 
+fmt_usd <- function(x, digits = 0, sign = FALSE) {
+  vapply(x, function(v) {
+    if (is.null(v) || is.na(v)) return("—")
+    s <- if (v < 0) "-" else if (sign && v > 0) "+" else ""
+    sprintf("%s$%s", s, format(round(abs(v), digits), big.mark = ",", nsmall = digits))
+  }, "")
+}
+fmt_pct <- function(x, digits = 2, sign = FALSE) {
+  vapply(x, function(v) {
+    if (is.null(v) || is.na(v)) return("—")
+    sprintf(paste0("%", if (sign) "+" else "", ".", digits, "f%%"), v)
+  }, "")
+}
+
 status_of_pct <- function(pct_of_limit) {
   if (is.null(pct_of_limit) || is.na(pct_of_limit)) return("ok")
   if (pct_of_limit >= 100) "bad" else if (pct_of_limit >= 75) "warn" else "ok"
@@ -175,6 +189,11 @@ nax_tally <- function(crit, maj, soft, max_crit = 0, max_maj = 1, max_soft = 1) 
       div(class = "n nax-mono", sprintf("%d/%d", soft, max_soft)),
       div(class = "l", "Soft DD"))
   )
+}
+
+nax_row <- function(k, v, cls = "") {
+  div(class = paste("nax-payout-row", cls),
+      span(class = "k", k), span(class = "v nax-mono", v))
 }
 
 nax_verdict_badge <- function(verdict) {

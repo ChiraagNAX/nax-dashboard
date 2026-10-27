@@ -66,6 +66,38 @@ get_equity_series <- function(trader_id, since) {
      order by captured_at", trader_id, since)
 }
 
+# End-of-day (UTC) equity since inception, with all logged transfers backed out so a
+# settlement sweep never shows up as a loss.
+get_equity_daily <- function(trader_id) {
+  q("select distinct on (d) d as day, eq as eq_close
+     from (
+       select (s.captured_at at time zone 'UTC')::date as d, s.captured_at,
+              s.equity_usd - coalesce((select sum(x.amount_usd) from transfers x
+                                       where x.trader_id = s.trader_id
+                                         and x.occurred_at <= s.captured_at), 0) as eq
+       from snapshots s where s.trader_id = $1
+     ) t
+     order by d, captured_at desc", trader_id)
+}
+
+# Equity since inception including everything already swept out, using the latest snapshot.
+get_cumulative_equity <- function(trader_id) {
+  r <- q("select s.equity_usd - coalesce((select sum(amount_usd) from transfers where trader_id = $1), 0) as cum_equity
+          from snapshots s where s.trader_id = $1 order by s.captured_at desc limit 1", trader_id)
+  if (nrow(r) == 0) NA_real_ else r$cum_equity[1]
+}
+
+get_max_drawdown_all <- function(trader_id) {
+  r <- q("select max(drawdown_pct) as mdd from snapshots where trader_id = $1", trader_id)
+  if (nrow(r) == 0 || is.na(r$mdd[1])) 0 else r$mdd[1]
+}
+
+get_trades <- function(trader_id) {
+  q("select symbol, side, qty, avg_entry, avg_exit, pnl_usd, open_fee_usd, close_fee_usd,
+            leverage, closed_at
+     from trades where trader_id = $1 order by closed_at desc", trader_id)
+}
+
 get_positions_for_snapshot <- function(snapshot_id) {
   q("select symbol, side, size, entry_price, mark_price, notional_usd, leverage, unrealised_pnl_usd
      from positions where snapshot_id = $1 order by abs(notional_usd) desc", snapshot_id)

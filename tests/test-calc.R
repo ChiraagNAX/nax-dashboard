@@ -36,6 +36,90 @@ test_that("eligible_payout — holdback splits payable_now vs holdback", {
   expect_equal(r$payable_now_usd,     112.5)
 })
 
+test_that("cumulative gate — profitable window but still below initial capital pays nothing", {
+  # Roja-style: window started at 8,862.53 after an earlier loss, now 9,172.80, initial 10,000.
+  r <- eligible_payout(8862.53, 9172.80, -1.8,
+                       initial_capital_usd = 10000, cumulative_equity_usd = 9172.80)
+  expect_gt(r$net_profit_usd, 0)
+  expect_gt(r$outperformance_usd, 0)
+  expect_false(r$above_initial_capital)
+  expect_equal(r$eligible_payout_usd, 0)
+  expect_equal(r$shortfall_to_initial_usd, 10000 - 9172.80)
+})
+
+test_that("cumulative gate — pays once cumulative equity is above initial capital", {
+  r <- eligible_payout(8862.53, 10062.53, 0,
+                       initial_capital_usd = 10000, cumulative_equity_usd = 10062.53)
+  expect_true(r$above_initial_capital)
+  expect_equal(r$cumulative_pnl_usd, 62.53)
+  expect_equal(r$eligible_payout_usd, 600)
+})
+
+test_that("cumulative gate — exactly at initial capital is not above it", {
+  r <- eligible_payout(9000, 10000, 0,
+                       initial_capital_usd = 10000, cumulative_equity_usd = 10000)
+  expect_equal(r$eligible_payout_usd, 0)
+})
+
+test_that("cumulative gate — equity already swept out still counts toward cumulative", {
+  # Equity 9,700 in account plus 1,200 previously swept = 10,900 cumulative (> 10,000).
+  r <- eligible_payout(9500, 9700, 0,
+                       initial_capital_usd = 10000, cumulative_equity_usd = 10900)
+  expect_true(r$above_initial_capital)
+  expect_equal(r$eligible_payout_usd, 100)
+})
+
+test_that("max_drawdown_pct finds the deepest peak-to-trough fall", {
+  expect_equal(max_drawdown_pct(c(100, 110, 99, 105, 120, 108)), 10)
+  expect_equal(max_drawdown_pct(c(100, 101, 102)), 0)
+  expect_equal(max_drawdown_pct(numeric()), 0)
+})
+
+test_that("recovery_needed_pct is the gain needed to return to a target", {
+  expect_equal(recovery_needed_pct(9000, 10000), (10000 / 9000 - 1) * 100)
+  expect_equal(recovery_needed_pct(10500, 10000), 0)
+})
+
+test_that("daily_pnl measures day one from the starting equity", {
+  d <- daily_pnl(as.Date(c("2026-10-01", "2026-10-02", "2026-10-03")),
+                 c(10100, 9999, 10200), start_equity = 10000)
+  expect_equal(d$pnl_usd, c(100, -101, 201))
+  expect_equal(d$ret_pct[1], 1)
+  s <- daily_stats(d)
+  expect_equal(s$best_usd, 201)
+  expect_equal(s$worst_usd, -101)
+  expect_equal(s$pct_up_days, 2 / 3 * 100)
+})
+
+test_that("trade_stats — win rate, payoff, profit factor, expectancy", {
+  s <- trade_stats(c(100, -50, 200, -50, 0))
+  expect_equal(s$n, 5)
+  expect_equal(s$wins, 2)
+  expect_equal(s$losses, 2)
+  expect_equal(s$win_rate, 40)
+  expect_equal(s$avg_win, 150)
+  expect_equal(s$avg_loss, -50)
+  expect_equal(s$payoff_ratio, 3)
+  expect_equal(s$profit_factor, 3)
+  expect_equal(s$expectancy, 40)
+  expect_equal(s$largest_win, 200)
+  expect_equal(s$largest_loss, -50)
+})
+
+test_that("trade_stats copes with no trades and with no losing trades", {
+  expect_equal(trade_stats(numeric())$n, 0)
+  s <- trade_stats(c(10, 20))
+  expect_true(is.na(s$profit_factor))
+  expect_equal(s$win_rate, 100)
+})
+
+test_that("pnl_by_symbol aggregates and sorts best first", {
+  o <- pnl_by_symbol(c("BTC", "ETH", "BTC"), c(100, -30, -20))
+  expect_equal(o$symbol, c("BTC", "ETH"))
+  expect_equal(o$pnl_usd, c(80, -30))
+  expect_equal(o$trades, c(2L, 1L))
+})
+
 test_that("drawdown — Level 1 HWM $10,800 triggers soft at $9,828 not hard", {
   hwm <- 10800
   # soft 9% -> $9,828; hard 13% -> $9,396

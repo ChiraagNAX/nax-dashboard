@@ -88,17 +88,30 @@ benchmark_return_pct <- function(index_start_level, index_end_level) {
 #' @param index_return_pct    NAX index return over the window, in percent
 #' @param profit_share_pct    default 50
 #' @param holdback_pct        default 0; non-zero defers that fraction one window
+#' @param initial_capital_usd   trader's initial funded capital (enables the cumulative gate)
+#' @param cumulative_equity_usd equity since inception, transfer-adjusted (i.e. including
+#'   anything already swept out). The gate requires this to be strictly above
+#'   initial_capital_usd, so losses from earlier windows must be recovered first.
+#'   Leave either NULL to skip the gate.
 eligible_payout <- function(starting_equity_usd,
                             ending_equity_usd,
                             index_return_pct,
                             profit_share_pct = 50,
-                            holdback_pct     = 0) {
+                            holdback_pct     = 0,
+                            initial_capital_usd   = NULL,
+                            cumulative_equity_usd = NULL) {
   net_profit <- ending_equity_usd - starting_equity_usd
   # Benchmark-equivalent floored at zero: a negative index doesn't penalise the trader.
   bench_equiv_raw <- starting_equity_usd * (index_return_pct / 100)
   bench_equiv     <- max(0, bench_equiv_raw)
   outperformance  <- net_profit - bench_equiv
-  eligible <- if (net_profit > 0 && outperformance > 0) {
+
+  gate_applies   <- !is.null(initial_capital_usd) && !is.null(cumulative_equity_usd)
+  cumulative_pnl <- if (gate_applies) cumulative_equity_usd - initial_capital_usd else NA_real_
+  above_initial  <- if (gate_applies) cumulative_pnl > 0 else TRUE
+  shortfall      <- if (gate_applies && !above_initial) -cumulative_pnl else 0
+
+  eligible <- if (net_profit > 0 && outperformance > 0 && above_initial) {
     outperformance * (profit_share_pct / 100)
   } else 0
   holdback    <- eligible * (holdback_pct / 100)
@@ -110,11 +123,93 @@ eligible_payout <- function(starting_equity_usd,
     benchmark_equiv_usd    = bench_equiv,
     outperformance_usd     = outperformance,
     profit_share_pct       = profit_share_pct,
+    cumulative_gate_applies = gate_applies,
+    cumulative_pnl_usd     = cumulative_pnl,
+    above_initial_capital  = above_initial,
+    shortfall_to_initial_usd = shortfall,
     eligible_payout_usd    = eligible,
     holdback_pct           = holdback_pct,
     holdback_usd           = holdback,
     payable_now_usd        = payable_now
   )
+}
+
+# --- performance analytics ----------------------------------------------------
+
+#' Largest peak-to-trough fall in an equity series, as a positive percent.
+max_drawdown_pct <- function(equity) {
+  equity <- equity[!is.na(equity)]
+  if (length(equity) == 0) return(0)
+  peak <- cummax(equity)
+  max(0, (peak - equity) / peak * 100)
+}
+
+#' Gain needed from `equity` to get back to `target` (e.g. HWM or initial capital), in percent.
+recovery_needed_pct <- function(equity, target) {
+  if (is.na(equity) || equity <= 0 || target <= equity) return(0)
+  (target / equity - 1) * 100
+}
+
+#' Daily P&L from end-of-day equity closes. The first day is measured from start_equity.
+daily_pnl <- function(day, close, start_equity) {
+  if (length(close) == 0) {
+    return(data.frame(day = as.Date(character()), close = numeric(),
+                      pnl_usd = numeric(), ret_pct = numeric()))
+  }
+  o    <- order(day)
+  day  <- day[o]; close <- close[o]
+  prev <- c(start_equity, close[-length(close)])
+  data.frame(day = day, close = close, pnl_usd = close - prev,
+             ret_pct = (close - prev) / prev * 100)
+}
+
+daily_stats <- function(daily) {
+  n <- nrow(daily)
+  if (n == 0) {
+    return(list(n_days = 0, best_usd = NA_real_, best_day = as.Date(NA),
+                worst_usd = NA_real_, worst_day = as.Date(NA),
+                avg_ret_pct = NA_real_, sd_ret_pct = NA_real_, pct_up_days = NA_real_))
+  }
+  list(n_days      = n,
+       best_usd    = max(daily$pnl_usd),   best_day  = daily$day[which.max(daily$pnl_usd)],
+       worst_usd   = min(daily$pnl_usd),   worst_day = daily$day[which.min(daily$pnl_usd)],
+       avg_ret_pct = mean(daily$ret_pct),
+       sd_ret_pct  = if (n >= 2) sd(daily$ret_pct) else NA_real_,
+       pct_up_days = mean(daily$pnl_usd > 0) * 100)
+}
+
+#' Closed-trade statistics from a vector of realised P&L per trade.
+trade_stats <- function(pnl) {
+  n <- length(pnl)
+  if (n == 0) {
+    return(list(n = 0, wins = 0, losses = 0, win_rate = NA_real_, avg_win = NA_real_,
+                avg_loss = NA_real_, payoff_ratio = NA_real_, profit_factor = NA_real_,
+                expectancy = NA_real_, largest_win = NA_real_, largest_loss = NA_real_,
+                total_pnl = 0))
+  }
+  w <- pnl[pnl > 0]; l <- pnl[pnl < 0]
+  avg_win  <- if (length(w)) mean(w) else NA_real_
+  avg_loss <- if (length(l)) mean(l) else NA_real_
+  list(n = n, wins = length(w), losses = length(l),
+       win_rate      = length(w) / n * 100,
+       avg_win       = avg_win,
+       avg_loss      = avg_loss,
+       payoff_ratio  = if (!is.na(avg_win) && !is.na(avg_loss)) avg_win / abs(avg_loss) else NA_real_,
+       profit_factor = if (length(l)) sum(w) / -sum(l) else NA_real_,
+       expectancy    = mean(pnl),
+       largest_win   = if (length(w)) max(w) else NA_real_,
+       largest_loss  = if (length(l)) min(l) else NA_real_,
+       total_pnl     = sum(pnl))
+}
+
+#' Realised P&L and trade count per symbol, best first.
+pnl_by_symbol <- function(symbol, pnl) {
+  if (length(pnl) == 0) return(data.frame(symbol = character(), pnl_usd = numeric(), trades = integer()))
+  agg <- aggregate(pnl, by = list(symbol = symbol), FUN = sum)
+  cnt <- table(symbol)
+  out <- data.frame(symbol = agg$symbol, pnl_usd = agg$x,
+                    trades = as.integer(cnt[agg$symbol]), stringsAsFactors = FALSE)
+  out[order(-out$pnl_usd), ]
 }
 
 # --- verdict track ------------------------------------------------------------

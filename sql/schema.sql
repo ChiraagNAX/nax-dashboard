@@ -221,6 +221,49 @@ create table if not exists admin_audit (
 );
 
 -- ---------------------------------------------------------------------------
+-- trades: closed positions pulled from Bybit closed-pnl by the sync service
+-- ---------------------------------------------------------------------------
+create table if not exists trades (
+    trade_id             bigserial primary key,
+    trader_id            text not null references traders(trader_id),
+    order_id             text not null,
+    symbol               text not null,
+    side                 text,
+    qty                  numeric,
+    avg_entry            numeric,
+    avg_exit             numeric,
+    pnl_usd              numeric not null,
+    open_fee_usd         numeric,
+    close_fee_usd        numeric,
+    leverage             numeric,
+    closed_at            timestamptz not null,
+    unique (trader_id, order_id)
+);
+create index if not exists trades_trader_time on trades(trader_id, closed_at desc);
+
+-- ---------------------------------------------------------------------------
+-- Lock down the Supabase public API. The dashboard and sync connect as the
+-- postgres role (which bypasses RLS); anon and authenticated get nothing.
+-- ---------------------------------------------------------------------------
+alter table levels            enable row level security;
+alter table traders           enable row level security;
+alter table windows           enable row level security;
+alter table snapshots         enable row level security;
+alter table positions         enable row level security;
+alter table transfers         enable row level security;
+alter table breaches          enable row level security;
+alter table benchmark_returns enable row level security;
+alter table payouts           enable row level security;
+alter table payout_ledger     enable row level security;
+alter table users             enable row level security;
+alter table admin_audit       enable row level security;
+alter table trades            enable row level security;
+revoke all on all tables    in schema public from anon, authenticated;
+revoke all on all sequences in schema public from anon, authenticated;
+alter default privileges in schema public revoke all on tables    from anon, authenticated;
+alter default privileges in schema public revoke all on sequences from anon, authenticated;
+
+-- ---------------------------------------------------------------------------
 -- Seed: Roja (Level 1), holdback 0 per Level 1 notice, window 2026-09-30 00:00 UTC
 -- ---------------------------------------------------------------------------
 insert into traders (trader_id, display_name, entity_name, level_code, starting_equity_usd,

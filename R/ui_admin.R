@@ -28,7 +28,7 @@ admin_ui <- function(id = "admin") {
       ),
       tabPanel("Transfers",
         br(),
-        p("Log deposits, withdrawals, and settlement sweeps. Required so settlement sweeps don't register as trading losses in the drawdown calculation.", style="color:#64748B;"),
+        p("Log deposits, withdrawals and settlement sweeps so they are not counted as trading losses. Use kind 'settlement' with a negative amount for the sweep to the reconciliation account: logging one also resets that trader's high-water mark to the balance after the sweep. Without a logged settlement the high-water mark keeps trailing up and is never reset by a loss.", style="color:#64748B;"),
         fluidRow(
           column(3, selectInput(ns("xfer_trader"), "Trader", choices = NULL)),
           column(2, selectInput(ns("xfer_kind"), "Kind",

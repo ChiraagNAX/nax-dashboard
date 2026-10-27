@@ -1,5 +1,7 @@
 # Trader view — bslib layout, status-aware colors, financial dashboard feel
 
+BENCH_MAX_AGE_H <- 6
+
 trader_ui <- function(id = "trader") {
   ns <- NS(id)
   tagList(
@@ -12,6 +14,13 @@ trader_ui <- function(id = "trader") {
       column(3, uiOutput(ns("kpi_return"))),
       column(3, uiOutput(ns("kpi_drawdown"))),
       column(3, uiOutput(ns("kpi_vs_index")))
+    ),
+    br(),
+    fluidRow(
+      column(3, uiOutput(ns("kpi_cumulative"))),
+      column(3, uiOutput(ns("kpi_maxdd"))),
+      column(3, uiOutput(ns("kpi_winrate"))),
+      column(3, uiOutput(ns("kpi_pf")))
     ),
     br(),
 
@@ -52,6 +61,25 @@ trader_ui <- function(id = "trader") {
           card_body(uiOutput(ns("payout_body")))
         )
       )
+    ),
+    br(),
+
+    # Performance analysis
+    div(style = "display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;",
+        tags$h5("Performance analysis", style = "margin:0; color:#0F172A; font-weight:600;"),
+        radioButtons(ns("scope"), NULL, inline = TRUE,
+                     choices = c("This window" = "window", "Since inception" = "all"),
+                     selected = "all")),
+    navset_card_tab(
+      nav_panel("Daily P&L",
+        plotOutput(ns("daily_plot"), height = "260px"),
+        uiOutput(ns("daily_stats_ui"))),
+      nav_panel("P&L breakdown", uiOutput(ns("breakdown_ui"))),
+      nav_panel("Trade statistics", uiOutput(ns("trade_stats_ui"))),
+      nav_panel("By symbol",
+        plotOutput(ns("symbol_plot"), height = "260px"),
+        tableOutput(ns("symbol_table"))),
+      nav_panel("Recent trades", tableOutput(ns("recent_trades_table")))
     ),
     br(),
 
@@ -97,8 +125,13 @@ trader_server <- function(id, trader_id_rv) {
       breaches <- if (nrow(window) == 1) get_breaches_in_window(tid, window$window_id) else data.frame()
       pos      <- if (nrow(snap)   == 1) get_positions_for_snapshot(snap$snapshot_id) else data.frame()
       series   <- if (nrow(window) == 1) get_equity_series(tid, window$window_start) else data.frame()
+      cum_equity <- get_cumulative_equity(tid)
+      # An index figure older than BENCH_MAX_AGE_H is not shown, rather than presented as current.
+      bench_age_h <- if (nrow(bench) == 1) as.numeric(difftime(Sys.time(), bench$captured_at, units = "hours")) else NA_real_
+      if (nrow(bench) == 1 && bench_age_h > BENCH_MAX_AGE_H) bench <- bench[0, , drop = FALSE]
       list(trader = trader, window = window, snap = snap, bench = bench,
-           breaches = breaches, pos = pos, series = series)
+           breaches = breaches, pos = pos, series = series,
+           cum_equity = cum_equity, bench_age_h = bench_age_h)
     })
 
     # ---------- HEADER ----------
@@ -323,6 +356,10 @@ trader_server <- function(id, trader_id_rv) {
           span(class = "k", "Difference"),
           span(class = "v nax-mono",
                if (is.na(diff)) "—" else sprintf("%+.2f pp", diff))),
+        if (nrow(bm) == 0)
+          div(style = "font-size:11px; color:#94A3B8; margin-top:6px;",
+              if (is.na(b$bench_age_h)) "Index data is not available yet."
+              else sprintf("The latest index figure is %.0f hours old, so it is not shown.", b$bench_age_h)),
         div(style = "margin-top: 14px;",
           div(style = "font-size: 11px; color:#64748B; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:6px;",
               "Verdict track"),
@@ -335,41 +372,49 @@ trader_server <- function(id, trader_id_rv) {
     output$payout_body <- renderUI({
       b <- bundle(); w <- b$window; s <- b$snap; bm <- b$bench; t <- b$trader
       if (nrow(w) == 0 || nrow(s) == 0) return(div("Waiting."))
-      idx_pct <- if (nrow(bm) == 1) bm$return_pct else 0
-      p <- eligible_payout(w$starting_equity_usd, s$equity_adj_usd, idx_pct,
+      initial <- t$starting_equity_usd
+      idx_ok  <- nrow(bm) == 1
+      p <- eligible_payout(w$starting_equity_usd, s$equity_adj_usd,
+                           if (idx_ok) bm$return_pct else 0,
                            profit_share_pct = t$profit_share_pct,
-                           holdback_pct     = t$holdback_pct)
+                           holdback_pct     = t$holdback_pct,
+                           initial_capital_usd   = initial,
+                           cumulative_equity_usd = b$cum_equity)
+      locked        <- isTRUE(p$cumulative_gate_applies) && !p$above_initial_capital
+      pending_index <- !idx_ok && !locked
+      share_before_gate <- if (p$net_profit_usd > 0 && p$outperformance_usd > 0)
+        p$outperformance_usd * p$profit_share_pct / 100 else 0
 
       rows <- tagList(
-        div(class = "nax-payout-row",
-          span(class = "k", "Starting equity"),
-          span(class = "v nax-mono", sprintf("$%s", format(round(w$starting_equity_usd, 0), big.mark=",")))),
-        div(class = "nax-payout-row",
-          span(class = "k", "Current equity"),
-          span(class = "v nax-mono", sprintf("$%s", format(round(s$equity_adj_usd, 0), big.mark=",")))),
-        div(class = "nax-payout-row",
-          span(class = "k", "Net profit"),
-          span(class = "v nax-mono",
-               sprintf("%s$%s",
-                       if (p$net_profit_usd >= 0) "" else "-",
-                       format(abs(round(p$net_profit_usd, 0)), big.mark=",")))),
-        div(class = "nax-payout-row",
-          span(class = "k", "Benchmark equivalent"),
-          span(class = "v nax-mono",
-               sprintf("$%s", format(round(p$benchmark_equiv_usd, 0), big.mark=",")))),
-        div(class = "nax-payout-row",
-          span(class = "k", "Outperformance"),
-          span(class = "v nax-mono",
-               sprintf("%s$%s",
-                       if (p$outperformance_usd >= 0) "" else "-",
-                       format(abs(round(p$outperformance_usd, 0)), big.mark=",")))),
-        div(class = "nax-payout-row",
-          span(class = "k", sprintf("Profit share (%.0f%%)", p$profit_share_pct)),
-          span(class = "v nax-mono",
-               sprintf("$%s", format(round(p$eligible_payout_usd, 0), big.mark=","))))
+        nax_row("Window starting equity", fmt_usd(w$starting_equity_usd)),
+        nax_row("Current equity", fmt_usd(s$equity_adj_usd)),
+        nax_row("Net profit this window", fmt_usd(p$net_profit_usd)),
+        nax_row("Benchmark equivalent", if (idx_ok) fmt_usd(p$benchmark_equiv_usd) else "—"),
+        nax_row("Outperformance", if (idx_ok) fmt_usd(p$outperformance_usd) else "—"),
+        nax_row(sprintf("Profit share (%.0f%%), before the inception rule", p$profit_share_pct),
+                if (idx_ok) fmt_usd(share_before_gate) else "—"),
+        nax_row(sprintf("P&L since inception (start %s)", fmt_usd(initial)),
+                fmt_usd(p$cumulative_pnl_usd, 0, sign = TRUE))
       )
 
-      total_row <- if (p$holdback_pct > 0) {
+      total_row <- if (locked) {
+        tagList(
+          div(class = "nax-payout-row total",
+            span(class = "k", "Eligible payout"),
+            span(class = "v nax-mono", fmt_usd(0))),
+          div(class = "nax-stale", style = "margin-top:10px; margin-bottom:0;",
+            sprintf("Locked. A payout needs your equity since inception to be above your starting capital of %s. You are %s below it.",
+                    fmt_usd(initial), fmt_usd(p$shortfall_to_initial_usd)))
+        )
+      } else if (pending_index) {
+        tagList(
+          div(class = "nax-payout-row total",
+            span(class = "k", "Eligible payout"),
+            span(class = "v nax-mono", "Pending")),
+          div(style = "font-size:12px; color:#64748B; margin-top:8px;",
+              "Index data is unavailable, so the payout cannot be indicated yet.")
+        )
+      } else if (p$holdback_pct > 0) {
         tagList(
           div(class = "nax-payout-row",
             span(class = "k", sprintf("Holdback (%.0f%%)", p$holdback_pct)),
@@ -389,6 +434,160 @@ trader_server <- function(id, trader_id_rv) {
 
       tagList(rows, total_row)
     })
+
+    # ---------- PERFORMANCE ANALYSIS ----------
+    perf_tick <- reactiveTimer(300000)
+    perf <- reactive({
+      perf_tick()
+      tid <- trader_id_rv(); req(tid)
+      list(daily = get_equity_daily(tid), mdd = get_max_drawdown_all(tid), trades = get_trades(tid))
+    })
+
+    window_scope <- reactive(identical(input$scope, "window") && nrow(bundle()$window) == 1)
+
+    scoped_trades <- reactive({
+      tr <- perf()$trades
+      if (window_scope()) tr <- tr[tr$closed_at >= bundle()$window$window_start, , drop = FALSE]
+      tr
+    })
+
+    daily_df <- reactive({
+      b <- bundle(); p <- perf()
+      d <- daily_pnl(p$daily$day, p$daily$eq_close, b$trader$starting_equity_usd)
+      if (window_scope()) d <- d[d$day >= as.Date(b$window$window_start), , drop = FALSE]
+      d
+    })
+
+    output$kpi_cumulative <- renderUI({
+      b <- bundle()
+      if (is.na(b$cum_equity)) return(nax_kpi("P&L since inception", "—"))
+      pnl <- b$cum_equity - b$trader$starting_equity_usd
+      nax_kpi("P&L since inception", fmt_usd(pnl, 0, sign = TRUE),
+              if (pnl > 0) sprintf("<span class='delta-up'>%s above starting capital</span>", fmt_usd(pnl))
+              else sprintf("<span class='delta-down'>%s to regain starting capital</span>", fmt_usd(-pnl)),
+              if (pnl > 0) "ok" else "bad")
+    })
+
+    output$kpi_maxdd <- renderUI({
+      b <- bundle(); t <- b$trader
+      mdd <- perf()$mdd
+      cur <- if (nrow(b$snap) == 1) b$snap$drawdown_pct %||% 0 else 0
+      nax_kpi("Max drawdown (inception)", fmt_pct(mdd),
+              sprintf("Now %s · hard stop %.0f%%", fmt_pct(cur), t$hard_stop_pct),
+              status_of_pct(mdd / t$hard_stop_pct * 100))
+    })
+
+    output$kpi_winrate <- renderUI({
+      st <- trade_stats(perf()$trades$pnl_usd)
+      nax_kpi("Win rate (inception)", if (st$n == 0) "—" else fmt_pct(st$win_rate, 0),
+              sprintf("%d wins · %d losses · %d trades", st$wins, st$losses, st$n), "")
+    })
+
+    output$kpi_pf <- renderUI({
+      st <- trade_stats(perf()$trades$pnl_usd)
+      nax_kpi("Profit factor (inception)",
+              if (is.na(st$profit_factor)) "—" else sprintf("%.2f", st$profit_factor),
+              sprintf("Expectancy %s per trade", fmt_usd(st$expectancy, 0, sign = TRUE)),
+              if (is.na(st$profit_factor)) "" else if (st$profit_factor >= 1) "ok" else "bad")
+    })
+
+    output$daily_plot <- renderPlot({
+      d <- daily_df()
+      if (nrow(d) == 0) { plot.new(); text(0.5, 0.5, "No daily data yet", col = "#94A3B8"); return(invisible()) }
+      op <- par(mar = c(4.5, 4.8, 1, 1), bg = "white", col.axis = "#64748B", col.lab = "#64748B", cex.axis = 0.85)
+      on.exit(par(op))
+      barplot(d$pnl_usd, col = ifelse(d$pnl_usd >= 0, "#10B981", "#EF4444"), border = NA,
+              names.arg = format(d$day, "%d %b"), las = 2, ylab = "Daily P&L (USD)")
+      abline(h = 0, col = "#CBD5E1")
+    })
+
+    output$daily_stats_ui <- renderUI({
+      d <- daily_df(); st <- daily_stats(d)
+      if (st$n_days == 0) return(NULL)
+      tagList(
+        nax_row("Best day", sprintf("%s (%s)", fmt_usd(st$best_usd, 0, TRUE), format(st$best_day, "%d %b"))),
+        nax_row("Worst day", sprintf("%s (%s)", fmt_usd(st$worst_usd, 0, TRUE), format(st$worst_day, "%d %b"))),
+        nax_row("Average daily return", fmt_pct(st$avg_ret_pct, 2, TRUE)),
+        nax_row("Daily volatility (std dev)", fmt_pct(st$sd_ret_pct)),
+        nax_row("Profitable days", sprintf("%.0f%% of %d recorded", st$pct_up_days, st$n_days)),
+        if (any(diff(d$day) > 1))
+          div(style = "font-size:11px; color:#94A3B8; margin-top:8px;",
+              "Days with no recorded equity are skipped, so the next recorded day's P&L covers the gap.")
+      )
+    })
+
+    output$breakdown_ui <- renderUI({
+      b <- bundle(); s <- b$snap; w <- b$window; t <- b$trader
+      if (nrow(s) == 0) return(div("Waiting."))
+      win    <- window_scope()
+      start  <- if (win) w$starting_equity_usd else t$starting_equity_usd
+      now_eq <- if (win) s$equity_adj_usd else b$cum_equity
+      realised <- sum(scoped_trades()$pnl_usd)
+      upl      <- s$unrealised_pnl_usd %||% 0
+      other    <- (now_eq - start) - realised - upl
+      tagList(
+        nax_row(if (win) "Equity at window start" else "Starting capital", fmt_usd(start)),
+        nax_row("Realised from closed trades", fmt_usd(realised, 0, TRUE)),
+        nax_row("Unrealised on open positions", fmt_usd(upl, 0, TRUE)),
+        nax_row("Funding, fees and other", fmt_usd(other, 0, TRUE)),
+        nax_row(if (win) "Current equity" else "Equity including amounts already swept out",
+                fmt_usd(now_eq), "total"),
+        div(style = "font-size:11px; color:#94A3B8; margin-top:8px;",
+            "Realised P&L is as reported by Bybit for each closed position. 'Other' is the rest of the equity change, mainly funding payments and timing differences.")
+      )
+    })
+
+    output$trade_stats_ui <- renderUI({
+      tr <- scoped_trades(); st <- trade_stats(tr$pnl_usd)
+      if (st$n == 0) return(div(style = "color:#64748B;", "No closed trades in this view."))
+      fees <- sum(tr$open_fee_usd, tr$close_fee_usd, na.rm = TRUE)
+      tagList(
+        nax_row("Closed trades", st$n),
+        nax_row("Win rate", sprintf("%.0f%% (%d W / %d L)", st$win_rate, st$wins, st$losses)),
+        nax_row("Average win", fmt_usd(st$avg_win)),
+        nax_row("Average loss", fmt_usd(st$avg_loss)),
+        nax_row("Payoff ratio (average win / average loss)",
+                if (is.na(st$payoff_ratio)) "—" else sprintf("%.2f", st$payoff_ratio)),
+        nax_row("Profit factor (gross wins / gross losses)",
+                if (is.na(st$profit_factor)) "—" else sprintf("%.2f", st$profit_factor)),
+        nax_row("Expectancy per trade", fmt_usd(st$expectancy, 0, TRUE)),
+        nax_row("Largest win", fmt_usd(st$largest_win)),
+        nax_row("Largest loss", fmt_usd(st$largest_loss)),
+        nax_row("Total realised", fmt_usd(st$total_pnl, 0, TRUE), "total"),
+        nax_row("Trading fees paid (as reported)", fmt_usd(fees))
+      )
+    })
+
+    sym_df <- reactive({ tr <- scoped_trades(); pnl_by_symbol(tr$symbol, tr$pnl_usd) })
+
+    output$symbol_plot <- renderPlot({
+      d <- sym_df()
+      if (nrow(d) == 0) { plot.new(); text(0.5, 0.5, "No closed trades in this view", col = "#94A3B8"); return(invisible()) }
+      d <- d[order(d$pnl_usd), ]
+      op <- par(mar = c(4, 6, 1, 1), bg = "white", col.axis = "#64748B", col.lab = "#64748B", cex.axis = 0.85)
+      on.exit(par(op))
+      barplot(d$pnl_usd, names.arg = sub("USDT$", "", d$symbol), horiz = TRUE, las = 1,
+              col = ifelse(d$pnl_usd >= 0, "#10B981", "#EF4444"), border = NA, xlab = "Realised P&L (USD)")
+      abline(v = 0, col = "#CBD5E1")
+    })
+
+    output$symbol_table <- renderTable({
+      d <- sym_df()
+      if (nrow(d) == 0) return(NULL)
+      data.frame(Symbol = sub("USDT$", "", d$symbol), Trades = d$trades,
+                 `Realised P&L` = fmt_usd(d$pnl_usd, 0, TRUE), check.names = FALSE)
+    }, striped = FALSE, bordered = FALSE, spacing = "xs")
+
+    output$recent_trades_table <- renderTable({
+      x <- head(scoped_trades(), 15)
+      if (nrow(x) == 0) return(NULL)
+      data.frame(`Closed (UTC)` = format(x$closed_at, "%d %b %H:%M", tz = "UTC"),
+                 Symbol = sub("USDT$", "", x$symbol),
+                 Entry = formatC(x$avg_entry, format = "g", digits = 6),
+                 Exit = formatC(x$avg_exit, format = "g", digits = 6),
+                 `P&L` = fmt_usd(x$pnl_usd, 2, TRUE),
+                 Lev = sprintf("%.0fx", x$leverage), check.names = FALSE)
+    }, striped = FALSE, bordered = FALSE, spacing = "xs")
 
     # ---------- POSITIONS ----------
     output$positions_body <- renderUI({
@@ -525,7 +724,8 @@ build_statement_html <- function(trader, payout) {
     "<tr><td class='k'>Starting equity</td><td class='v'>$", format(round(payout$starting_equity_usd,2), big.mark=","), "</td></tr>",
     "<tr><td class='k'>Ending equity</td><td class='v'>$", format(round(payout$ending_equity_usd,2), big.mark=","), "</td></tr>",
     "<tr><td class='k'>Net trading profit</td><td class='v'>$", format(round(payout$net_profit_usd,2), big.mark=","), "</td></tr>",
-    "<tr><td class='k'>Index return</td><td class='v'>", sprintf("%+.2f%%", payout$index_return_pct), "</td></tr>",
+    "<tr><td class='k'>Index return</td><td class='v'>",
+    if (is.na(payout$index_return_pct)) "not recorded" else sprintf("%+.2f%%", payout$index_return_pct), "</td></tr>",
     "<tr><td class='k'>Benchmark-equivalent (floored at $0)</td><td class='v'>$", format(round(payout$benchmark_equiv_usd,2), big.mark=","), "</td></tr>",
     "<tr><td class='k'>Outperformance</td><td class='v'>$", format(round(payout$outperformance_usd,2), big.mark=","), "</td></tr>",
     "<tr><td class='k'>Profit share (", payout$profit_share_pct, "%)</td><td class='v'>$", format(round(payout$eligible_payout_usd,2), big.mark=","), "</td></tr>",
