@@ -177,6 +177,21 @@ nax_css <- "
   :focus-visible { outline: 2px solid var(--nax-sky); outline-offset: 2px; }
   .nax-login .brand .sub, .nax-footer a { color: var(--nax-mute); }
   .nax-footer a:hover { color: var(--nax-sky); }
+
+  .nax-reqs { margin: 12px 0 4px; padding: 10px 12px; background: #F8FAFC; border-radius: 8px; font-size: 12px; }
+  .nax-reqs .ttl { font-weight: 600; color: var(--nax-navy); margin-bottom: 6px; }
+  .nax-req { display: flex; gap: 8px; padding: 3px 0; color: var(--nax-mute); }
+  .nax-req .mark { width: 14px; font-weight: 700; flex: none; }
+  .nax-req.yes .mark { color: var(--nax-ok); }
+  .nax-req.no .mark { color: var(--nax-bad); }
+  .nax-req.no { color: var(--nax-navy); }
+  .nax-wallet { padding: 12px; border: 1px solid var(--nax-line); border-radius: 10px; margin-bottom: 14px; }
+  .nax-wallet .ttl { font-size: 12px; font-weight: 600; color: var(--nax-navy); margin-bottom: 8px; }
+  .nax-wallet .cur { font-size: 13px; margin-bottom: 8px; }
+  .nax-wallet .form-group { margin-bottom: 8px; }
+  .nax-wallet .hint { font-size: 11px; color: var(--nax-mute); margin-top: 8px; }
+  .nax-err-msg { color: #991B1B; background: #FEE2E2; padding: 8px 10px; border-radius: 8px; font-size: 12px; margin-top: 8px; }
+  .nax-ok-msg { color: #065F46; background: #D1FAE5; padding: 8px 10px; border-radius: 8px; font-size: 12px; margin-top: 8px; }
   .nax-login .err { color: var(--nax-bad); font-size: 13px; margin-top: 10px; }
 "
 

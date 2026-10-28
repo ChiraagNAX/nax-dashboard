@@ -355,13 +355,27 @@ trader_server <- function(id, trader_id_rv) {
                 fmt_usd(p$cumulative_pnl_usd, 0, sign = TRUE))
       )
 
+      req_item <- function(state, text) {
+        mark <- switch(state, yes = "✓", no = "✗", "•")
+        div(class = paste("nax-req", state), span(class = "mark", mark), span(text))
+      }
+      requirements <- div(class = "nax-reqs",
+        div(class = "ttl", "To qualify for a payout, all three must be true"),
+        req_item(if (!isTRUE(p$cumulative_gate_applies)) "yes" else if (p$above_initial_capital) "yes" else "no",
+                 sprintf("Equity since inception is above your starting capital of %s", fmt_usd(initial))),
+        req_item(if (p$net_profit_usd > 0) "yes" else "no",
+                 "This window is profitable"),
+        req_item(if (!idx_ok) "wait" else if (p$outperformance_usd > 0) "yes" else "no",
+                 "This window's return beats the NAX Index (being back in profit is not enough on its own)")
+      )
+
       total_row <- if (locked) {
         tagList(
           div(class = "nax-payout-row total",
             span(class = "k", "Eligible payout"),
             span(class = "v nax-mono", fmt_usd(0))),
           div(class = "nax-stale", style = "margin-top:10px; margin-bottom:0;",
-            sprintf("Locked. A payout needs your equity since inception to be above your starting capital of %s. You are %s below it.",
+            sprintf("Locked. A payout needs your equity since inception to be above your starting capital of %s. You are %s below it. Once you are back above it, you must also beat the NAX Index in the window to qualify.",
                     fmt_usd(initial), fmt_usd(p$shortfall_to_initial_usd)))
         )
       } else if (pending_index) {
@@ -390,7 +404,7 @@ trader_server <- function(id, trader_id_rv) {
                sprintf("$%s", format(round(p$eligible_payout_usd, 0), big.mark=","))))
       }
 
-      tagList(rows, total_row)
+      tagList(rows, requirements, total_row)
     })
 
     # ---------- PERFORMANCE ANALYSIS ----------
@@ -570,19 +584,38 @@ trader_server <- function(id, trader_id_rv) {
     }, striped = FALSE, bordered = FALSE, spacing = "xs")
 
     # ---------- LEDGER ----------
+    wallet_tick <- reactiveVal(0)
+
     output$ledger_body <- renderUI({
-      t <- bundle()$trader
+      wallet_tick()
+      tid <- trader_id_rv(); req(tid)
+      t <- get_trader(tid)
       pay <- get_payouts(t$trader_id)
-      masked_addr <- if (!is.na(t$usdt_address) && nchar(t$usdt_address) >= 6) {
-        paste0("…", substring(t$usdt_address, nchar(t$usdt_address) - 5))
-      } else "not configured"
+      addr <- t$usdt_address
+      has_addr <- !is.na(addr) && nzchar(addr)
+      is_sol <- has_addr && validate_sol_address(addr)$ok
+      masked <- if (has_addr && nchar(addr) >= 10)
+        paste0(substr(addr, 1, 4), "...", substring(addr, nchar(addr) - 3)) else "not set"
+      wallet <- div(class = "nax-wallet",
+        div(class = "ttl", "Payout wallet (Solana only)"),
+        if (!has_addr)
+          div(class = "nax-stale", "Add your Solana (SOL) wallet address so we can pay you. USDT on Solana only.")
+        else if (!is_sol)
+          div(class = "nax-stale", "Your saved address is not a valid Solana address. Please replace it with a Solana (SOL) address.")
+        else
+          div(class = "cur", HTML(sprintf("Saved: <b class='nax-mono'>%s</b> (Solana)", masked))),
+        textInput(ns("wallet_addr"), NULL, placeholder = "Paste your Solana wallet address", width = "100%"),
+        textInput(ns("wallet_addr2"), NULL, placeholder = "Paste it again to confirm", width = "100%"),
+        actionButton(ns("wallet_save"), if (has_addr) "Update address" else "Save address", class = "btn-sm btn-primary"),
+        uiOutput(ns("wallet_msg")),
+        div(class = "hint", "Send USDT or SOL-chain assets only to a Solana address you control. Addresses starting with 0x (Ethereum, BNB Chain, Arbitrum and similar) are not accepted. Double-check it: payments sent to a wrong address cannot be recovered.")
+      )
       tagList(
         div(style = "font-size: 12px; color:#64748B; margin-bottom: 12px;",
-          HTML(sprintf("Invoice to <b>eran@naxcapital.com.au</b> &middot; USDT %s (%s)",
-                       masked_addr, t$usdt_network %||% "network tbc"))),
+          HTML("Invoice to <b>eran@naxcapital.com.au</b>")),
+        wallet,
         if (nrow(pay) == 0) {
-          div(style="color:#64748B; font-size:13px; padding:4px 0;",
-              "No settled windows yet.")
+          div(style="color:#64748B; font-size:13px; padding:4px 0;", "No settled windows yet.")
         } else {
           tagList(
             uiOutput(ns("ledger_rows_ui")),
@@ -591,6 +624,30 @@ trader_server <- function(id, trader_id_rv) {
           )
         }
       )
+    })
+
+    wallet_msg_rv <- reactiveVal(NULL)
+    output$wallet_msg <- renderUI(wallet_msg_rv())
+
+    observeEvent(input$wallet_save, {
+      tid <- trader_id_rv(); req(tid)
+      a1 <- trimws(input$wallet_addr %||% ""); a2 <- trimws(input$wallet_addr2 %||% "")
+      v <- validate_sol_address(a1)
+      msg <- function(txt, ok = FALSE)
+        wallet_msg_rv(div(class = if (ok) "nax-ok-msg" else "nax-err-msg", txt))
+      if (!v$ok) return(msg(v$message))
+      if (!identical(a1, a2)) return(msg("The two addresses do not match. Please check and try again."))
+      before <- get_trader(tid)$usdt_address
+      qe("update traders set usdt_address = $1, usdt_network = 'SOL' where trader_id = $2", a1, tid)
+      qe("insert into admin_audit (actor, action, target_table, target_id, note)
+          values ($1, 'update_wallet', 'traders', $2, $3)",
+         tid, tid, sprintf("wallet changed (previous ends %s, new ends %s)",
+                           if (is.na(before) || !nzchar(before)) "none" else substring(before, nchar(before) - 3),
+                           substring(a1, nchar(a1) - 3)))
+      updateTextInput(session, "wallet_addr", value = "")
+      updateTextInput(session, "wallet_addr2", value = "")
+      wallet_msg_rv(div(class = "nax-ok-msg", "Saved. Your payout wallet is now set to this Solana address."))
+      wallet_tick(wallet_tick() + 1)
     })
 
     output$ledger_rows_ui <- renderUI({
@@ -648,7 +705,7 @@ trader_server <- function(id, trader_id_rv) {
 build_statement_html <- function(trader, payout) {
   entity <- if (is.na(trader$entity_name)) trader$display_name else trader$entity_name
   usdt_full <- if (is.na(trader$usdt_address)) "(not configured)" else trader$usdt_address
-  usdt_net  <- if (is.na(trader$usdt_network)) "(network tbc)" else trader$usdt_network
+  usdt_net  <- if (is.na(trader$usdt_network)) "(not set)" else if (trader$usdt_network == "SOL") "Solana (SOL)" else trader$usdt_network
   issued <- format(Sys.time(), "%d %b %Y %H:%M UTC")
   w_start <- format(payout$window_start, "%d %b %Y")
   w_end   <- format(payout$window_end,   "%d %b %Y")
@@ -694,7 +751,7 @@ build_statement_html <- function(trader, payout) {
     "<h2>Payment</h2>",
     "<table>",
     "<tr><td class='k'>Invoice to</td><td class='v'>eran@naxcapital.com.au</td></tr>",
-    "<tr><td class='k'>USDT address</td><td class='v'>", usdt_full, "</td></tr>",
+    "<tr><td class='k'>Wallet address</td><td class='v'>", usdt_full, "</td></tr>",
     "<tr><td class='k'>Network</td><td class='v'>", usdt_net, "</td></tr>",
     "</table>",
     "<div class='notice'>This is a statement of amount owed, not a tax invoice. The trader issues their own invoice to NAX Finance for this amount.</div>",

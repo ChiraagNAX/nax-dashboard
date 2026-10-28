@@ -177,3 +177,15 @@ test_that("verdict — fail when trader return not positive even if beating a wo
   v <- verdict(-1, -5, 0, 0, 0)
   expect_equal(v$status, "FAIL")
 })
+
+test_that("wallet validation accepts Solana and rejects EVM and others", {
+  expect_true(validate_sol_address("7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU")$ok)
+  expect_true(validate_sol_address("  So11111111111111111111111111111111111111112 ")$ok)
+  evm <- validate_sol_address("0x742d35Cc6634C0532925a3b844Bc454e4438f44e")
+  expect_false(evm$ok); expect_equal(evm$kind, "evm")
+  expect_false(validate_sol_address("TXyz1234567890abcdefghijkmnopqrstu")$ok)
+  expect_false(validate_sol_address("1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2")$ok)
+  expect_false(validate_sol_address("abc")$ok)
+  expect_false(validate_sol_address("")$ok)
+  expect_false(validate_sol_address("7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsO")$ok)
+})

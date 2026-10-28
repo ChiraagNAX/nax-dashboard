@@ -231,3 +231,23 @@ verdict <- function(trader_return_pct, index_return_pct,
     list(status = "BEHIND", reason = sprintf("trailing index by %.2f pp", index_return_pct - trader_return_pct))
   }
 }
+
+# Payout wallet check. Only Solana (SOL) addresses are accepted.
+# Returns list(ok, kind, message); kind is "sol", "evm", "other" or "empty".
+validate_sol_address <- function(x) {
+  if (is.null(x) || length(x) == 0 || is.na(x[1])) x <- ""
+  x <- trimws(as.character(x[1]))
+  if (!nzchar(x)) return(list(ok = FALSE, kind = "empty", message = "Enter your Solana address."))
+  if (grepl("^0x[0-9a-fA-F]{40}$", x))
+    return(list(ok = FALSE, kind = "evm",
+                message = "That is an EVM address (Ethereum, BNB Chain, Arbitrum and similar). We only pay to Solana (SOL) addresses. Please enter a Solana address."))
+  b58 <- grepl("^[1-9A-HJ-NP-Za-km-z]+$", x)
+  n <- nchar(x)
+  if (b58 && n == 34 && grepl("^T", x))
+    return(list(ok = FALSE, kind = "other", message = "That looks like a Tron address. We only pay to Solana (SOL) addresses."))
+  if (b58 && n >= 26 && n <= 35 && grepl("^[13]", x))
+    return(list(ok = FALSE, kind = "other", message = "That looks like a Bitcoin address. We only pay to Solana (SOL) addresses."))
+  if (!b58 || n < 32 || n > 44)
+    return(list(ok = FALSE, kind = "other", message = "That is not a valid Solana address. It is 32 to 44 letters and numbers. Check it and try again."))
+  list(ok = TRUE, kind = "sol", message = "")
+}
