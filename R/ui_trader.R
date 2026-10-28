@@ -1,4 +1,4 @@
-# Trader view — bslib layout, status-aware colors, financial dashboard feel
+# Trader view - bslib layout, status-aware colors, financial dashboard feel
 
 BENCH_MAX_AGE_H <- 6
 
@@ -8,65 +8,30 @@ trader_ui <- function(id = "trader") {
     uiOutput(ns("header")),
     uiOutput(ns("staleness_banner")),
 
-    # Row 1: KPI strip
-    fluidRow(
-      column(3, uiOutput(ns("kpi_equity"))),
-      column(3, uiOutput(ns("kpi_return"))),
-      column(3, uiOutput(ns("kpi_drawdown"))),
-      column(3, uiOutput(ns("kpi_vs_index")))
-    ),
-    br(),
-    fluidRow(
-      column(3, uiOutput(ns("kpi_cumulative"))),
-      column(3, uiOutput(ns("kpi_maxdd"))),
-      column(3, uiOutput(ns("kpi_winrate"))),
-      column(3, uiOutput(ns("kpi_pf")))
-    ),
-    br(),
+    div(class = "nax-grid k4",
+      uiOutput(ns("kpi_equity")), uiOutput(ns("kpi_return")),
+      uiOutput(ns("kpi_drawdown")), uiOutput(ns("kpi_vs_index"))),
+    div(class = "nax-grid k4",
+      uiOutput(ns("kpi_cumulative")), uiOutput(ns("kpi_maxdd")),
+      uiOutput(ns("kpi_winrate")), uiOutput(ns("kpi_pf"))),
 
-    # Row 2: Equity chart (wide) + Limits (narrow)
-    fluidRow(
-      column(8,
-        card(
-          card_header("Equity vs HWM"),
-          card_body(plotOutput(ns("dd_plot"), height = "280px"))
-        )
-      ),
-      column(4,
-        card(
-          card_header("Risk limits"),
-          card_body(uiOutput(ns("limits_body")))
-        )
-      )
-    ),
-    br(),
+    div(class = "nax-grid c21",
+      card(card_header("Equity vs HWM"),
+           card_body(plotOutput(ns("dd_plot"), height = "280px"))),
+      card(card_header("Risk limits"),
+           card_body(uiOutput(ns("limits_body"))))),
 
-    # Row 3: Breaches + Benchmark + Payout working
-    fluidRow(
-      column(4,
-        card(
-          card_header("Breaches (this window)"),
-          card_body(uiOutput(ns("breaches_body")))
-        )
-      ),
-      column(4,
-        card(
-          card_header("Benchmark vs NAX Index"),
-          card_body(uiOutput(ns("benchmark_body")))
-        )
-      ),
-      column(4,
-        card(
-          card_header("Indicative payout"),
-          card_body(uiOutput(ns("payout_body")))
-        )
-      )
-    ),
-    br(),
+    div(class = "nax-grid c3",
+      card(card_header("Breaches (this window)"),
+           card_body(uiOutput(ns("breaches_body")))),
+      card(card_header("Benchmark vs NAX Index"),
+           card_body(uiOutput(ns("benchmark_body")))),
+      card(card_header("Indicative payout"),
+           card_body(uiOutput(ns("payout_body"))))),
 
     # Performance analysis
-    div(style = "display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;",
-        tags$h5("Performance analysis", style = "margin:0; color:#0F172A; font-weight:600;"),
+    div(class = "nax-section-head",
+        tags$h5("Performance analysis"),
         radioButtons(ns("scope"), NULL, inline = TRUE,
                      choices = c("This window" = "window", "Since inception" = "all"),
                      selected = "all")),
@@ -81,23 +46,10 @@ trader_ui <- function(id = "trader") {
         tableOutput(ns("symbol_table"))),
       nav_panel("Recent trades", tableOutput(ns("recent_trades_table")))
     ),
-    br(),
 
-    # Positions + Ledger
-    fluidRow(
-      column(6,
-        card(
-          card_header("Open positions"),
-          card_body(uiOutput(ns("positions_body")))
-        )
-      ),
-      column(6,
-        card(
-          card_header("Payout ledger"),
-          card_body(uiOutput(ns("ledger_body")))
-        )
-      )
-    ),
+    div(class = "nax-grid c2", style = "margin-top:16px;",
+      card(card_header("Open positions"), card_body(uiOutput(ns("positions_body")))),
+      card(card_header("Payout ledger"), card_body(uiOutput(ns("ledger_body"))))),
 
     div(class = "nax-footer",
       "Indicative only. Payouts are determined by NAX reconciliation under your Contractor Agreement.",
@@ -159,8 +111,14 @@ trader_server <- function(id, trader_id_rv) {
                 format(s$captured_at, "%H:%M:%S"), age_min)
       } else "Waiting for first snapshot"
 
+      chip <- if (nrow(s) == 1) {
+        age <- as.numeric(difftime(Sys.time(), s$captured_at, units = "mins"))
+        if (age <= 5) span(class = "nax-chip live", "Live")
+        else if (age <= 20) span(class = "nax-chip delayed", "Delayed")
+        else span(class = "nax-chip stale", "Stale")
+      }
       div(class = "nax-header",
-        tags$h2(t$display_name, lvl_badge),
+        div(class = "top", tags$h2(t$display_name, lvl_badge), chip),
         div(class = "sub", HTML(sprintf("%s %s · %s", capital, entity, window_line))),
         div(class = "sub", stamp),
         div(class = "nax-progress-track",
@@ -183,7 +141,7 @@ trader_server <- function(id, trader_id_rv) {
     # ---------- KPIs ----------
     output$kpi_equity <- renderUI({
       s <- bundle()$snap
-      if (nrow(s) == 0) return(nax_kpi("Equity", "—"))
+      if (nrow(s) == 0) return(nax_kpi("Equity", "n/a"))
       nax_kpi("Equity (USD)",
               sprintf("$%s", format(round(s$equity_adj_usd, 0), big.mark = ",")),
               sprintf("Unrealised %s$%s",
@@ -193,7 +151,7 @@ trader_server <- function(id, trader_id_rv) {
 
     output$kpi_return <- renderUI({
       b <- bundle(); s <- b$snap; w <- b$window
-      if (nrow(s) == 0 || nrow(w) == 0) return(nax_kpi("Window return", "—"))
+      if (nrow(s) == 0 || nrow(w) == 0) return(nax_kpi("Window return", "n/a"))
       start_eq <- w$starting_equity_usd
       ret_usd  <- s$equity_adj_usd - start_eq
       ret_pct  <- ret_usd / start_eq * 100
@@ -210,7 +168,7 @@ trader_server <- function(id, trader_id_rv) {
 
     output$kpi_drawdown <- renderUI({
       b <- bundle(); s <- b$snap; t <- b$trader
-      if (nrow(s) == 0) return(nax_kpi("Drawdown", "—"))
+      if (nrow(s) == 0) return(nax_kpi("Drawdown", "n/a"))
       dd <- s$drawdown_pct %||% 0
       pct_of_hard <- dd / t$hard_stop_pct * 100
       status <- status_of_pct(pct_of_hard)
@@ -224,7 +182,7 @@ trader_server <- function(id, trader_id_rv) {
 
     output$kpi_vs_index <- renderUI({
       b <- bundle(); s <- b$snap; w <- b$window; bm <- b$bench
-      if (nrow(s) == 0 || nrow(w) == 0) return(nax_kpi("vs Index", "—"))
+      if (nrow(s) == 0 || nrow(w) == 0) return(nax_kpi("vs Index", "n/a"))
       start_eq <- w$starting_equity_usd
       ret_pct  <- (s$equity_adj_usd - start_eq) / start_eq * 100
       if (nrow(bm) == 0) return(nax_kpi("vs Index", "n/a", "Awaiting index"))
@@ -351,11 +309,11 @@ trader_server <- function(id, trader_id_rv) {
         div(class = "nax-payout-row",
           span(class = "k", "Index return"),
           span(class = "v nax-mono",
-               if (is.na(idx_pct)) "—" else sprintf("%+.2f%%", idx_pct))),
+               if (is.na(idx_pct)) "n/a" else sprintf("%+.2f%%", idx_pct))),
         div(class = "nax-payout-row",
           span(class = "k", "Difference"),
           span(class = "v nax-mono",
-               if (is.na(diff)) "—" else sprintf("%+.2f pp", diff))),
+               if (is.na(diff)) "n/a" else sprintf("%+.2f pp", diff))),
         if (nrow(bm) == 0)
           div(style = "font-size:11px; color:#94A3B8; margin-top:6px;",
               if (is.na(b$bench_age_h)) "Index data is not available yet."
@@ -389,10 +347,10 @@ trader_server <- function(id, trader_id_rv) {
         nax_row("Window starting equity", fmt_usd(w$starting_equity_usd)),
         nax_row("Current equity", fmt_usd(s$equity_adj_usd)),
         nax_row("Net profit this window", fmt_usd(p$net_profit_usd)),
-        nax_row("Benchmark equivalent", if (idx_ok) fmt_usd(p$benchmark_equiv_usd) else "—"),
-        nax_row("Outperformance", if (idx_ok) fmt_usd(p$outperformance_usd) else "—"),
+        nax_row("Benchmark equivalent", if (idx_ok) fmt_usd(p$benchmark_equiv_usd) else "n/a"),
+        nax_row("Outperformance", if (idx_ok) fmt_usd(p$outperformance_usd) else "n/a"),
         nax_row(sprintf("Profit share (%.0f%%), before the inception rule", p$profit_share_pct),
-                if (idx_ok) fmt_usd(share_before_gate) else "—"),
+                if (idx_ok) fmt_usd(share_before_gate) else "n/a"),
         nax_row(sprintf("P&L since inception (start %s)", fmt_usd(initial)),
                 fmt_usd(p$cumulative_pnl_usd, 0, sign = TRUE))
       )
@@ -460,7 +418,7 @@ trader_server <- function(id, trader_id_rv) {
 
     output$kpi_cumulative <- renderUI({
       b <- bundle()
-      if (is.na(b$cum_equity)) return(nax_kpi("P&L since inception", "—"))
+      if (is.na(b$cum_equity)) return(nax_kpi("P&L since inception", "n/a"))
       pnl <- b$cum_equity - b$trader$starting_equity_usd
       nax_kpi("P&L since inception", fmt_usd(pnl, 0, sign = TRUE),
               if (pnl > 0) sprintf("<span class='delta-up'>%s above starting capital</span>", fmt_usd(pnl))
@@ -479,14 +437,14 @@ trader_server <- function(id, trader_id_rv) {
 
     output$kpi_winrate <- renderUI({
       st <- trade_stats(perf()$trades$pnl_usd)
-      nax_kpi("Win rate (inception)", if (st$n == 0) "—" else fmt_pct(st$win_rate, 0),
+      nax_kpi("Win rate (inception)", if (st$n == 0) "n/a" else fmt_pct(st$win_rate, 0),
               sprintf("%d wins · %d losses · %d trades", st$wins, st$losses, st$n), "")
     })
 
     output$kpi_pf <- renderUI({
       st <- trade_stats(perf()$trades$pnl_usd)
       nax_kpi("Profit factor (inception)",
-              if (is.na(st$profit_factor)) "—" else sprintf("%.2f", st$profit_factor),
+              if (is.na(st$profit_factor)) "n/a" else sprintf("%.2f", st$profit_factor),
               sprintf("Expectancy %s per trade", fmt_usd(st$expectancy, 0, sign = TRUE)),
               if (is.na(st$profit_factor)) "" else if (st$profit_factor >= 1) "ok" else "bad")
     })
@@ -547,9 +505,9 @@ trader_server <- function(id, trader_id_rv) {
         nax_row("Average win", fmt_usd(st$avg_win)),
         nax_row("Average loss", fmt_usd(st$avg_loss)),
         nax_row("Payoff ratio (average win / average loss)",
-                if (is.na(st$payoff_ratio)) "—" else sprintf("%.2f", st$payoff_ratio)),
+                if (is.na(st$payoff_ratio)) "n/a" else sprintf("%.2f", st$payoff_ratio)),
         nax_row("Profit factor (gross wins / gross losses)",
-                if (is.na(st$profit_factor)) "—" else sprintf("%.2f", st$profit_factor)),
+                if (is.na(st$profit_factor)) "n/a" else sprintf("%.2f", st$profit_factor)),
         nax_row("Expectancy per trade", fmt_usd(st$expectancy, 0, TRUE)),
         nax_row("Largest win", fmt_usd(st$largest_win)),
         nax_row("Largest loss", fmt_usd(st$largest_loss)),
@@ -697,7 +655,7 @@ build_statement_html <- function(trader, payout) {
 
   paste0(
     "<!doctype html><html><head><meta charset='utf-8'>",
-    "<title>NAX Statement — ", entity, " — ", w_end, "</title>",
+    "<title>NAX Statement - ", entity, " - ", w_end, "</title>",
     "<style>",
     "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:720px;margin:40px auto;padding:40px;color:#0F172A;}",
     ".brand{font-size:22px;font-weight:700;color:#0F172A;margin-bottom:4px;}",
@@ -711,7 +669,7 @@ build_statement_html <- function(trader, payout) {
     ".notice{background:#FEF3C7;color:#92400E;padding:12px 16px;border-radius:8px;font-size:12px;margin-top:24px;}",
     ".footer{color:#94A3B8;font-size:11px;margin-top:40px;border-top:1px solid #E2E8F0;padding-top:16px;}",
     "</style></head><body>",
-    "<div class='brand'>NAX Capital — Statement of amount owed</div>",
+    "<div class='brand'>NAX Capital - Statement of amount owed</div>",
     "<div class='sub'>Issued ", issued, "</div>",
     "<h2>Trader</h2>",
     "<table>",

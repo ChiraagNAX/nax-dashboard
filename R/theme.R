@@ -127,6 +127,56 @@ nax_css <- "
   .nax-login .btn-primary { background: var(--nax-navy); border-color: var(--nax-navy);
                              padding: 10px; font-weight: 600; }
   .nax-login .btn-primary:hover { background: #1E293B; border-color: #1E293B; }
+
+  .nax-grid { display: grid; gap: 16px; margin-bottom: 16px; }
+  .nax-grid > * { min-width: 0; }
+  .nax-grid > .card { height: 100%; margin-bottom: 0; }
+  .nax-grid.k4 { grid-template-columns: repeat(4, 1fr); }
+  .nax-grid.c21 { grid-template-columns: 2fr 1fr; }
+  .nax-grid.c3 { grid-template-columns: repeat(3, 1fr); }
+  .nax-grid.c2 { grid-template-columns: repeat(2, 1fr); }
+  @media (max-width: 991px) {
+    .nax-grid.k4 { grid-template-columns: repeat(2, 1fr); }
+    .nax-grid.c21, .nax-grid.c3, .nax-grid.c2 { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 575px) {
+    .container-fluid { padding-left: 12px; padding-right: 12px; }
+    .nax-grid { gap: 10px; }
+    .nax-kpi { padding: 12px 14px; }
+    .nax-kpi .value { font-size: 21px; }
+    .nax-header { padding: 16px; }
+    .nax-header h2 { font-size: 22px; }
+    .nax-payout-row { font-size: 13px; gap: 12px; }
+    .nav-tabs { flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; }
+  }
+  .recalculating { opacity: 1 !important; transition: none !important; }
+  .nax-header .top { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .nax-chip { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+              padding: 4px 10px 4px 20px; border-radius: 999px; position: relative; white-space: nowrap; }
+  .nax-chip::before { content: ''; position: absolute; left: 8px; top: 50%; width: 7px; height: 7px;
+                      margin-top: -3.5px; border-radius: 50%; background: currentColor; }
+  .nax-chip.live { background: rgba(16,185,129,0.18); color: #6EE7B7; }
+  .nax-chip.live::before { animation: nax-pulse 2s ease-in-out infinite; }
+  .nax-chip.delayed { background: rgba(245,158,11,0.2); color: #FCD34D; }
+  .nax-chip.stale { background: rgba(239,68,68,0.2); color: #FCA5A5; }
+  @keyframes nax-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+  @media (prefers-reduced-motion: reduce) { .nax-chip.live::before { animation: none; }
+    .nax-gauge .fill { transition: none; } }
+  .nax-section-head { display: flex; justify-content: space-between; align-items: center;
+                      flex-wrap: wrap; gap: 8px; margin: 8px 0 8px; }
+  .nax-section-head h5 { margin: 0; color: var(--nax-navy); font-weight: 600; }
+  .nax-section-head .shiny-input-container { margin-bottom: 0; width: auto; }
+  .nax-payout-row .v.pos { color: var(--nax-ok); }
+  .nax-payout-row .v.neg { color: var(--nax-bad); }
+  .nax-payout-row .k { padding-right: 12px; }
+  .nax-kpi { transition: box-shadow 150ms ease; }
+  .nax-kpi:hover { box-shadow: 0 2px 8px rgba(15,23,42,0.06); }
+  table.table td, table.table th { font-variant-numeric: tabular-nums; }
+  table.table-sm th { font-size: 11px; color: var(--nax-mute); text-transform: uppercase;
+                      letter-spacing: 0.05em; font-weight: 600; }
+  :focus-visible { outline: 2px solid var(--nax-sky); outline-offset: 2px; }
+  .nax-login .brand .sub, .nax-footer a { color: var(--nax-mute); }
+  .nax-footer a:hover { color: var(--nax-sky); }
   .nax-login .err { color: var(--nax-bad); font-size: 13px; margin-top: 10px; }
 "
 
@@ -136,14 +186,14 @@ nax_css <- "
 
 fmt_usd <- function(x, digits = 0, sign = FALSE) {
   vapply(x, function(v) {
-    if (is.null(v) || is.na(v)) return("—")
+    if (is.null(v) || is.na(v)) return("n/a")
     s <- if (v < 0) "-" else if (sign && v > 0) "+" else ""
     sprintf("%s$%s", s, format(round(abs(v), digits), big.mark = ",", nsmall = digits))
   }, "")
 }
 fmt_pct <- function(x, digits = 2, sign = FALSE) {
   vapply(x, function(v) {
-    if (is.null(v) || is.na(v)) return("—")
+    if (is.null(v) || is.na(v)) return("n/a")
     sprintf(paste0("%", if (sign) "+" else "", ".", digits, "f%%"), v)
   }, "")
 }
@@ -192,8 +242,10 @@ nax_tally <- function(crit, maj, soft, max_crit = 0, max_maj = 1, max_soft = 1) 
 }
 
 nax_row <- function(k, v, cls = "") {
+  v <- as.character(v)
+  sg <- if (grepl("^[+][$0-9]", v)) "pos" else if (grepl("^-[$0-9]", v)) "neg" else ""
   div(class = paste("nax-payout-row", cls),
-      span(class = "k", k), span(class = "v nax-mono", v))
+      span(class = "k", k), span(class = paste("v nax-mono", sg), v))
 }
 
 nax_verdict_badge <- function(verdict) {

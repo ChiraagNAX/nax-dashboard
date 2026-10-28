@@ -44,7 +44,7 @@ admin_ui <- function(id = "admin") {
       ),
       tabPanel("Users",
         br(),
-        p("Reset a trader's password. New random password is shown once — copy and send securely.", style = "color:#64748B;"),
+        p("Reset a trader's password. New random password is shown once: copy and send securely.", style = "color:#64748B;"),
         fluidRow(
           column(4, selectInput(ns("pw_user"), "User", choices = NULL)),
           column(4, actionButton(ns("pw_reset"), "Generate new password", class = "btn-primary"))
@@ -209,7 +209,7 @@ admin_server <- function(id, user_id_rv) {
           values ($1, 'reset_password', 'users', $2, 'password reset')",
          actor, uid)
       output$pw_result <- renderText(sprintf(
-        "New password for %s: %s\n\nShow this to the user once — it will not be stored or shown again.",
+        "New password for %s: %s\n\nShow this to the user once, it will not be stored or shown again.",
         uid, new_pw))
     })
 
